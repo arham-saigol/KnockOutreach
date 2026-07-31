@@ -11,6 +11,7 @@ import { crawlWebsite } from "./adapters/tinyfish";
 import { structuredCompletion } from "./adapters/deepseek";
 import { PROMPT_VERSIONS } from "./prompts";
 import { sha256 } from "../lib/core/hashing";
+import { sourceArtifactIsVersioned } from "../lib/core/knowledge-artifacts";
 
 export const projectOnboarding = workflow
   .define({
@@ -93,6 +94,12 @@ const persistedPage = v.object({
   lastModified: v.optional(v.string()),
 });
 
+const versionedSourceHash = v.object({
+  url: v.string(),
+  hash: v.string(),
+  storageId: v.optional(v.id("_storage")),
+});
+
 export const setProjectStage = internalMutation({
   args: {
     projectId: v.id("projects"),
@@ -152,7 +159,7 @@ export const persistKnowledge = internalMutation({
     pages: v.array(persistedPage),
     markdown: v.optional(v.string()),
     knowledgeStorageId: v.optional(v.id("_storage")),
-    sourceHashes: v.array(v.object({ url: v.string(), hash: v.string() })),
+    sourceHashes: v.array(versionedSourceHash),
     model: v.string(),
     promptVersion: v.string(),
     changeReason: v.string(),
@@ -167,6 +174,19 @@ export const persistKnowledge = internalMutation({
     )
       throw new Error("Project context changed during knowledge workflow");
     const now = Date.now();
+    const knowledgeVersions = await ctx.db
+      .query("knowledgeVersions")
+      .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+      .collect();
+    const artifactIsVersioned = (page: {
+      url: string;
+      contentHash: string;
+      storageId?: string;
+    }) =>
+      sourceArtifactIsVersioned(
+        page,
+        knowledgeVersions.map((version) => version.sourceHashes),
+      );
     for (const page of args.pages) {
       const existing = await ctx.db
         .query("projectPages")
@@ -184,7 +204,11 @@ export const persistKnowledge = internalMutation({
             : ("ok" as const),
       };
       if (existing) {
-        if (existing.storageId && existing.storageId !== page.storageId)
+        if (
+          existing.storageId &&
+          existing.storageId !== page.storageId &&
+          !artifactIsVersioned(existing)
+        )
           await ctx.storage.delete(existing.storageId);
         await ctx.db.patch(existing._id, value);
       } else await ctx.db.insert("projectPages", value);
@@ -196,7 +220,8 @@ export const persistKnowledge = internalMutation({
       .collect();
     for (const page of stalePages)
       if (!currentUrls.has(page.url)) {
-        if (page.storageId) await ctx.storage.delete(page.storageId);
+        if (page.storageId && !artifactIsVersioned(page))
+          await ctx.storage.delete(page.storageId);
         await ctx.db.delete(page._id);
       }
     if (args.meaningful && args.markdown) {
@@ -231,6 +256,33 @@ export const persistKnowledge = internalMutation({
         nextRefreshAt: now + 7 * 24 * 60 * 60 * 1000,
       });
     }
+  },
+});
+
+export const cleanupStagedArtifacts = internalMutation({
+  args: {
+    projectId: v.id("projects"),
+    storageIds: v.array(v.id("_storage")),
+  },
+  handler: async (ctx, args) => {
+    const pages = await ctx.db
+      .query("projectPages")
+      .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+      .collect();
+    const versions = await ctx.db
+      .query("knowledgeVersions")
+      .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+      .collect();
+    const referenced = new Set<string>();
+    for (const page of pages)
+      if (page.storageId) referenced.add(page.storageId);
+    for (const version of versions) {
+      referenced.add(version.storageId);
+      for (const source of version.sourceHashes)
+        if (source.storageId) referenced.add(source.storageId);
+    }
+    for (const storageId of args.storageIds)
+      if (!referenced.has(storageId)) await ctx.storage.delete(storageId);
   },
 });
 
@@ -289,26 +341,17 @@ export const crawlAndSynthesize = internalAction({
           (saved: any) =>
             saved.url === page.finalUrl && saved.contentHash === contentHash,
         );
-        const storageId =
-          existing?.storageId ??
-          (await ctx.storage.store(
-            new Blob([content], { type: "text/markdown; charset=utf-8" }),
-          ));
         return {
           url: page.finalUrl,
           title: page.title,
           content,
-          storageId,
+          storageId: existing?.storageId,
           contentHash,
           etag: page.etag,
           lastModified: page.lastModified,
         };
       }),
     );
-    const sourceHashes = prepared.map((page) => ({
-      url: page.url,
-      hash: page.contentHash,
-    }));
     const previousHashes = new Map(
       context.pages.map((page: any) => [page.url, page.contentHash]),
     );
@@ -367,24 +410,52 @@ export const crawlAndSynthesize = internalAction({
       model = result.model;
       promptVersion = PROMPT_VERSIONS.knowledge;
     }
-    const knowledgeStorageId =
-      meaningful && markdown
-        ? await ctx.storage.store(
-            new Blob([markdown], { type: "text/markdown; charset=utf-8" }),
-          )
-        : undefined;
-    await ctx.runMutation(internal.onboarding.persistKnowledge, {
-      projectId: args.projectId,
-      expectedDomain: args.expectedDomain,
-      expectedGeneration: args.expectedGeneration,
-      pages: prepared,
-      markdown,
-      knowledgeStorageId,
-      sourceHashes,
-      model,
-      promptVersion,
-      changeReason,
-      meaningful,
-    });
+    const stagedStorageIds = [];
+    try {
+      const persistedPages = [];
+      for (const page of prepared) {
+        const storageId =
+          page.storageId ??
+          (await ctx.storage.store(
+            new Blob([page.content], {
+              type: "text/markdown; charset=utf-8",
+            }),
+          ));
+        if (!page.storageId) stagedStorageIds.push(storageId);
+        persistedPages.push({ ...page, storageId });
+      }
+      const knowledgeStorageId =
+        meaningful && markdown
+          ? await ctx.storage.store(
+              new Blob([markdown], { type: "text/markdown; charset=utf-8" }),
+            )
+          : undefined;
+      if (knowledgeStorageId) stagedStorageIds.push(knowledgeStorageId);
+      const sourceHashes = persistedPages.map((page) => ({
+        url: page.url,
+        hash: page.contentHash,
+        storageId: page.storageId,
+      }));
+      await ctx.runMutation(internal.onboarding.persistKnowledge, {
+        projectId: args.projectId,
+        expectedDomain: args.expectedDomain,
+        expectedGeneration: args.expectedGeneration,
+        pages: persistedPages,
+        markdown,
+        knowledgeStorageId,
+        sourceHashes,
+        model,
+        promptVersion,
+        changeReason,
+        meaningful,
+      });
+    } catch (error) {
+      if (stagedStorageIds.length)
+        await ctx.runMutation(internal.onboarding.cleanupStagedArtifacts, {
+          projectId: args.projectId,
+          storageIds: stagedStorageIds,
+        });
+      throw error;
+    }
   },
 });

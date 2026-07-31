@@ -22,7 +22,10 @@ import {
 } from "../lib/core/filtering";
 import { extractEmails } from "../lib/core/email-extraction";
 import { sha256 } from "../lib/core/hashing";
-import { assertCompleteClassification } from "../lib/core/classification";
+import {
+  assertCompleteClassification,
+  classificationBatches,
+} from "../lib/core/classification";
 
 const stepNames = [
   "Fetch Product Hunt",
@@ -82,12 +85,14 @@ export const runNow = mutation({
   args: {},
   handler: async (ctx) => {
     await requireIdentity(ctx);
-    const latest = await ctx.db
+    const failedRun = await ctx.db
       .query("dailyRuns")
-      .withIndex("by_started_at")
-      .order("desc")
+      .withIndex("by_status_and_started_at", (q: any) =>
+        q.eq("status", "failed"),
+      )
+      .order("asc")
       .first();
-    const retryDay = latest?.status === "failed" ? latest.day : undefined;
+    const retryDay = failedRun?.day;
     const { runId, shouldStart } = await getOrCreateRun(
       ctx,
       "manual",
@@ -708,6 +713,8 @@ export const upsertCandidateAndDraft = internalMutation({
       promptVersion: PROMPT_VERSIONS.draft,
       knowledgeVersionId: args.knowledgeVersionId,
       sourceHashes: args.sourceHashes,
+      senderFounderName: project.founderName,
+      senderAgentName: project.agentName,
       createdAt: now,
       updatedAt: now,
     });
@@ -732,12 +739,12 @@ export const filterEnrichAndDraft = internalAction({
     const ambiguous = context.launches.filter(
       (launch: any) => launch.universalStatus === "pending",
     );
-    if (ambiguous.length) {
+    for (const batch of classificationBatches(ambiguous)) {
       const classified = await structuredCompletion({
         system:
           "Classify whether each Product Hunt launch belongs to a massive, established company that should be excluded from founder-led cold outreach. Massive means a widely recognized large enterprise or a product clearly owned by one. Do not exclude an early startup merely because it sounds professional. Return JSON with results preserving each id.",
         user: JSON.stringify(
-          ambiguous.map((launch: any) => ({
+          batch.map((launch: any) => ({
             id: launch._id,
             name: launch.name,
             tagline: launch.tagline,
@@ -752,11 +759,11 @@ export const filterEnrichAndDraft = internalAction({
         classified.value.results.map((result) => [result.id, result]),
       );
       assertCompleteClassification(
-        ambiguous.map((launch: any) => launch._id),
+        batch.map((launch: any) => launch._id),
         classified.value.results.map((result) => result.id),
       );
       await ctx.runMutation(internal.pipeline.setUniversalResults, {
-        results: ambiguous.map((launch: any) => {
+        results: batch.map((launch: any) => {
           const result = byId.get(launch._id);
           if (!result)
             throw new Error("Universal classification is incomplete");

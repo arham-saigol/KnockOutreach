@@ -29,7 +29,11 @@ const exclusions = v.object({
   notes: v.string(),
   cooldownDays: v.number(),
 });
-const sourceHash = v.object({ url: v.string(), hash: v.string() });
+const sourceHash = v.object({
+  url: v.string(),
+  hash: v.string(),
+  storageId: v.optional(v.id("_storage")),
+});
 const emailEvidence = v.object({
   email: v.string(),
   evidenceUrl: v.string(),
@@ -127,7 +131,8 @@ export default defineSchema({
     error: v.optional(v.string()),
   })
     .index("by_day", ["day"])
-    .index("by_started_at", ["startedAt"]),
+    .index("by_started_at", ["startedAt"])
+    .index("by_status_and_started_at", ["status", "startedAt"]),
 
   launches: defineTable({
     productHuntId: v.string(),
@@ -230,6 +235,8 @@ export default defineSchema({
     promptVersion: v.string(),
     knowledgeVersionId: v.id("knowledgeVersions"),
     sourceHashes: v.array(v.string()),
+    senderFounderName: v.optional(v.string()),
+    senderAgentName: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

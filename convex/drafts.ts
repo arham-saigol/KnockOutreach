@@ -73,6 +73,8 @@ export const storeRegenerated = internalMutation({
     const candidate = await ctx.db.get(args.candidateId);
     if (!candidate) throw new Error("Candidate not found");
     assertDraftEditable(candidate.status);
+    const project = await ctx.db.get(candidate.projectId);
+    if (!project) throw new Error("Project not found");
     const current = await ctx.db
       .query("drafts")
       .withIndex("by_candidate_and_status", (q: any) =>
@@ -95,6 +97,8 @@ export const storeRegenerated = internalMutation({
       promptVersion: PROMPT_VERSIONS.draft,
       knowledgeVersionId: candidate.knowledgeVersionId,
       sourceHashes: candidate.sourceHashes,
+      senderFounderName: project.founderName,
+      senderAgentName: project.agentName,
       createdAt: now,
       updatedAt: now,
     });

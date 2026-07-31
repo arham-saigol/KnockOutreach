@@ -8,6 +8,7 @@ import { assertCandidateTransition } from "../lib/core/state-machine";
 import { hasConflictingSend } from "../lib/core/send-policy";
 import { assertInboxOwnership } from "../lib/core/inbox-ownership";
 import { advanceDeliveryStatus } from "../lib/core/delivery-state";
+import { draftMatchesSenderIdentity } from "../lib/core/draft-freshness";
 
 const bannedPhrases = [
   "i hope this finds you well",
@@ -115,6 +116,10 @@ export const prepareSend = internalMutation({
       .unique();
     if (!draft)
       throw new Error("The current draft is no longer ready to send.");
+    if (!draftMatchesSenderIdentity(draft, project))
+      throw new Error(
+        "The sender identity changed after this draft was generated. Regenerate it before sending.",
+      );
 
     const now = Date.now();
     const sendId = `knock_${String(args.candidateId)}_${now}`;
