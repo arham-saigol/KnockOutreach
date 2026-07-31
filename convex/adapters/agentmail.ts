@@ -13,6 +13,10 @@ export class DefinitiveSendError extends Error {
   override name = "DefinitiveSendError";
 }
 
+export function isAmbiguousAgentMailStatus(status: number) {
+  return status >= 500 && status <= 599;
+}
+
 export async function sendAgentMail(input: {
   inboxId: string;
   to: string;
@@ -55,7 +59,10 @@ export async function sendAgentMail(input: {
     }
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 500);
-      throw new DefinitiveSendError(
+      const SendError = isAmbiguousAgentMailStatus(response.status)
+        ? AmbiguousSendError
+        : DefinitiveSendError;
+      throw new SendError(
         `AgentMail rejected the send (${response.status}): ${detail}`,
       );
     }

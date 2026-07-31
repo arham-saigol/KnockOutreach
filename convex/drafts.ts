@@ -11,6 +11,13 @@ import { requireCandidate } from "./lib/auth";
 import { structuredCompletion } from "./adapters/deepseek";
 import { draftSystemPrompt, PROMPT_VERSIONS } from "./prompts";
 
+const editableCandidateStatuses = ["ready", "send_failed", "no_contact"];
+
+function assertDraftEditable(status: string) {
+  if (!editableCandidateStatuses.includes(status))
+    throw new Error("This draft is no longer editable.");
+}
+
 export const update = mutation({
   args: {
     candidateId: v.id("projectCandidates"),
@@ -19,8 +26,7 @@ export const update = mutation({
   },
   handler: async (ctx, args) => {
     const { candidate } = await requireCandidate(ctx, args.candidateId);
-    if (!["ready", "send_failed", "no_contact"].includes(candidate.status))
-      throw new Error("This draft is no longer editable.");
+    assertDraftEditable(candidate.status);
     const draft = await ctx.db
       .query("drafts")
       .withIndex("by_candidate_and_status", (q: any) =>
@@ -42,6 +48,7 @@ export const regenerationContext = internalQuery({
     const candidate = await ctx.db.get(args.candidateId);
     if (!candidate || candidate.ownerId !== args.ownerId)
       throw new Error("Candidate not found");
+    assertDraftEditable(candidate.status);
     const project = await ctx.db.get(candidate.projectId);
     const launch = await ctx.db.get(candidate.launchId);
     const enrichment = candidate.enrichmentId
@@ -65,6 +72,7 @@ export const storeRegenerated = internalMutation({
   handler: async (ctx, args) => {
     const candidate = await ctx.db.get(args.candidateId);
     if (!candidate) throw new Error("Candidate not found");
+    assertDraftEditable(candidate.status);
     const current = await ctx.db
       .query("drafts")
       .withIndex("by_candidate_and_status", (q: any) =>
