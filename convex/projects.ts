@@ -106,10 +106,22 @@ export const update = mutation({
     exclusions: exclusionsValidator,
   },
   handler: async (ctx, args) => {
-    await requireProject(ctx, args.projectId);
+    const { identity, project } = await requireProject(ctx, args.projectId);
+    const domain = normalizeUrl(args.domain);
+    const domainChanged = domain !== project.domain;
+    if (domainChanged) {
+      const existing = await ctx.db
+        .query("projects")
+        .withIndex("by_owner_and_domain", (q: any) =>
+          q.eq("ownerId", identity.subject).eq("domain", domain),
+        )
+        .unique();
+      if (existing && existing._id !== args.projectId)
+        throw new Error("A project for this domain already exists.");
+    }
     await ctx.db.patch(args.projectId, {
       name: args.name.trim(),
-      domain: normalizeUrl(args.domain),
+      domain,
       founderName: args.founderName.trim(),
       agentName: args.agentName.trim(),
       inboxId: args.inboxId.trim(),
@@ -117,8 +129,19 @@ export const update = mutation({
         ...args.exclusions,
         cooldownDays: Math.max(1, Math.min(730, args.exclusions.cooldownDays)),
       },
+      ...(domainChanged
+        ? { status: "crawling" as const, onboardingError: undefined }
+        : {}),
       updatedAt: Date.now(),
     });
+    if (domainChanged) {
+      const workflowId = await start(
+        ctx,
+        internal.onboarding.projectOnboarding,
+        { projectId: args.projectId, refresh: false },
+      );
+      await ctx.db.patch(args.projectId, { onboardingWorkflowId: workflowId });
+    }
   },
 });
 

@@ -22,6 +22,7 @@ import {
 } from "../lib/core/filtering";
 import { extractEmails } from "../lib/core/email-extraction";
 import { sha256 } from "../lib/core/hashing";
+import { assertCompleteClassification } from "../lib/core/classification";
 
 const stepNames = [
   "Fetch Product Hunt",
@@ -587,6 +588,7 @@ async function generateDraft(input: {
 export const upsertCandidateAndDraft = internalMutation({
   args: {
     projectId: v.id("projects"),
+    knowledgeVersionId: v.id("knowledgeVersions"),
     launchId: v.id("launches"),
     enrichmentId: v.id("launchEnrichments"),
     reason: v.string(),
@@ -601,7 +603,11 @@ export const upsertCandidateAndDraft = internalMutation({
   handler: async (ctx, args) => {
     const project = await ctx.db.get(args.projectId);
     const enrichment = await ctx.db.get(args.enrichmentId);
-    if (!project?.activeKnowledgeVersionId || !enrichment)
+    if (
+      !project ||
+      project.activeKnowledgeVersionId !== args.knowledgeVersionId ||
+      !enrichment
+    )
       throw new Error("Project context changed during pipeline");
     const existing = await ctx.db
       .query("projectCandidates")
@@ -642,7 +648,7 @@ export const upsertCandidateAndDraft = internalMutation({
         matchConfidence: args.confidence,
         filterModel: args.filterModel,
         filterPromptVersion: PROMPT_VERSIONS.projectFilter,
-        knowledgeVersionId: project.activeKnowledgeVersionId,
+        knowledgeVersionId: args.knowledgeVersionId,
         sourceHashes: args.sourceHashes,
         selectedEmail: enrichment.selectedEmail,
         selectedEmailConfidence: enrichment.selectedEmailConfidence,
@@ -676,7 +682,7 @@ export const upsertCandidateAndDraft = internalMutation({
       claims: args.claims,
       model: args.draftModel,
       promptVersion: PROMPT_VERSIONS.draft,
-      knowledgeVersionId: project.activeKnowledgeVersionId,
+      knowledgeVersionId: args.knowledgeVersionId,
       sourceHashes: args.sourceHashes,
       createdAt: now,
       updatedAt: now,
@@ -721,14 +727,20 @@ export const filterEnrichAndDraft = internalAction({
       const byId = new Map(
         classified.value.results.map((result) => [result.id, result]),
       );
+      assertCompleteClassification(
+        ambiguous.map((launch: any) => launch._id),
+        classified.value.results.map((result) => result.id),
+      );
       await ctx.runMutation(internal.pipeline.setUniversalResults, {
         results: ambiguous.map((launch: any) => {
           const result = byId.get(launch._id);
+          if (!result)
+            throw new Error("Universal classification is incomplete");
           return {
             launchId: launch._id,
-            eligible: !(result?.massive ?? false),
-            reason: result?.reason ?? "No massive-company signal",
-            confidence: result?.confidence ?? 0.5,
+            eligible: !result.massive,
+            reason: result.reason,
+            confidence: result.confidence,
             model: classified.model,
           };
         }),
@@ -919,6 +931,7 @@ export const filterEnrichAndDraft = internalAction({
         });
         await ctx.runMutation(internal.pipeline.upsertCandidateAndDraft, {
           projectId: match.project._id,
+          knowledgeVersionId: match.project.knowledge._id,
           launchId: match.launch._id,
           enrichmentId: match.enrichment._id,
           reason: match.reason,

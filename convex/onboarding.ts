@@ -179,11 +179,18 @@ const knowledgeSchema = z.object({
   markdown: z.string().min(200),
   changeReason: z.string().min(1),
 });
-const changeSchema = z.object({
-  meaningful: z.boolean(),
-  reason: z.string().min(1),
-  markdown: z.string().default(""),
-});
+const changeSchema = z.discriminatedUnion("meaningful", [
+  z.object({
+    meaningful: z.literal(true),
+    reason: z.string().min(1),
+    markdown: z.string().min(200),
+  }),
+  z.object({
+    meaningful: z.literal(false),
+    reason: z.string().min(1),
+    markdown: z.string().optional().default(""),
+  }),
+]);
 
 export const crawlAndSynthesize = internalAction({
   args: { projectId: v.id("projects"), refresh: v.boolean() },
