@@ -1,0 +1,34 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# tests and builds
+/coverage
+/.next
+/out
+
+# production
+/build
+
+# local environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Convex generated deployment metadata
+.convex
+
+# editor and OS
+.DS_Store
+Thumbs.db
+*.pem
+*.log
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
