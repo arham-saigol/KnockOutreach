@@ -105,6 +105,24 @@ export const processAgentMailEvent = internalMutation({
         deliveredAt:
           status === "delivered" && !send.deliveredAt ? now : send.deliveredAt,
       });
+      const candidate = await ctx.db.get(send.candidateId);
+      if (
+        candidate &&
+        ["sending", "send_unknown", "send_failed"].includes(candidate.status)
+      ) {
+        const rejected = status === "rejected";
+        await ctx.db.patch(candidate._id, {
+          status: rejected ? "send_failed" : "sent",
+          completedAt: rejected ? undefined : now,
+          error: rejected ? "AgentMail rejected the message." : undefined,
+          updatedAt: now,
+        });
+        if (rejected)
+          await ctx.db.patch(send.draftId, {
+            status: "ready",
+            updatedAt: now,
+          });
+      }
     }
 
     return { duplicate: false, deferred: false };

@@ -169,6 +169,7 @@ export const retryContact = action({
         url: page.finalUrl,
         content: page.content,
       })),
+      crawled.canonicalUrl,
     );
     if (!emails.length)
       throw new Error(

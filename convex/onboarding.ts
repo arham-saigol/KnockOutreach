@@ -183,8 +183,11 @@ export const persistKnowledge = internalMutation({
             ? ("unchanged" as const)
             : ("ok" as const),
       };
-      if (existing) await ctx.db.patch(existing._id, value);
-      else await ctx.db.insert("projectPages", value);
+      if (existing) {
+        if (existing.storageId && existing.storageId !== page.storageId)
+          await ctx.storage.delete(existing.storageId);
+        await ctx.db.patch(existing._id, value);
+      } else await ctx.db.insert("projectPages", value);
     }
     const currentUrls = new Set(args.pages.map((page) => page.url));
     const stalePages = await ctx.db
@@ -192,7 +195,10 @@ export const persistKnowledge = internalMutation({
       .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
       .collect();
     for (const page of stalePages)
-      if (!currentUrls.has(page.url)) await ctx.db.delete(page._id);
+      if (!currentUrls.has(page.url)) {
+        if (page.storageId) await ctx.storage.delete(page.storageId);
+        await ctx.db.delete(page._id);
+      }
     if (args.meaningful && args.markdown) {
       if (!args.knowledgeStorageId)
         throw new Error("Knowledge storage artifact is missing");
@@ -259,9 +265,25 @@ export const crawlAndSynthesize = internalAction({
       expectedGeneration: args.expectedGeneration,
     });
     const { canonicalUrl, pages } = await crawlWebsite(context.project.domain);
+    const sourceHeaders = pages.map(
+      (page) => `SOURCE: ${page.finalUrl}\nTITLE: ${page.title ?? ""}\n`,
+    );
+    const separatorLength = Math.max(0, pages.length - 1) * 7;
+    const sourceContentLimit = Math.max(
+      0,
+      Math.min(
+        60_000,
+        Math.floor(
+          (260_000 -
+            separatorLength -
+            sourceHeaders.reduce((total, header) => total + header.length, 0)) /
+            Math.max(1, pages.length),
+        ),
+      ),
+    );
     const prepared = await Promise.all(
       pages.map(async (page) => {
-        const content = page.content.slice(0, 60_000);
+        const content = page.content.slice(0, sourceContentLimit);
         const contentHash = await sha256(content);
         const existing = context.pages.find(
           (saved: any) =>
@@ -307,8 +329,7 @@ export const crawlAndSynthesize = internalAction({
         (page) =>
           `SOURCE: ${page.url}\nTITLE: ${page.title ?? ""}\n${page.content}`,
       )
-      .join("\n\n---\n\n")
-      .slice(0, 260_000);
+      .join("\n\n---\n\n");
     let markdown: string | undefined;
     let changeReason: string;
     let meaningful = true;

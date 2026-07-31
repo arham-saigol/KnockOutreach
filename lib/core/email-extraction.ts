@@ -31,8 +31,10 @@ function confidenceFor(email: string, source: EmailEvidence["source"]) {
 
 export function extractEmails(
   pages: Array<{ url: string; content: string }>,
+  canonicalUrl: string,
 ): EmailEvidence[] {
   const found = new Map<string, EmailEvidence>();
+  const canonicalHost = normalizedHost(canonicalUrl);
 
   for (const page of pages) {
     for (const [pattern, source] of [
@@ -43,6 +45,8 @@ export function extractEmails(
       for (const match of page.content.matchAll(pattern)) {
         const email = normalizeEmail(match[1] ?? match[0]);
         if (!email) continue;
+        const emailDomain = email.split("@")[1];
+        if (!sameDomain(emailDomain, canonicalHost)) continue;
         const local = email.split("@")[0];
         if (BLOCKED_LOCAL_PARTS.has(local)) continue;
         const next: EmailEvidence = {
@@ -59,4 +63,23 @@ export function extractEmails(
   }
 
   return [...found.values()].sort((a, b) => b.confidence - a.confidence);
+}
+
+function normalizedHost(value: string) {
+  try {
+    return new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return value
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "");
+  }
+}
+
+function sameDomain(emailDomain: string, canonicalHost: string) {
+  return (
+    emailDomain === canonicalHost ||
+    emailDomain.endsWith(`.${canonicalHost}`) ||
+    canonicalHost.endsWith(`.${emailDomain}`)
+  );
 }

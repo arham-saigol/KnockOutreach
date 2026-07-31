@@ -833,6 +833,7 @@ export const filterEnrichAndDraft = internalAction({
               url: page.finalUrl,
               content: page.content,
             })),
+            crawled.canonicalUrl,
           );
           const synthesis = await structuredCompletion({
             system:
