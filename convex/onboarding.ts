@@ -17,6 +17,7 @@ export const projectOnboarding = workflow
     args: {
       projectId: v.id("projects"),
       expectedDomain: v.string(),
+      expectedGeneration: v.number(),
       refresh: v.boolean(),
     },
   })
@@ -27,6 +28,7 @@ export const projectOnboarding = workflow
         {
           projectId: args.projectId,
           expectedDomain: args.expectedDomain,
+          expectedGeneration: args.expectedGeneration,
           status: "crawling",
         },
         { name: "Mark website crawl started" },
@@ -44,6 +46,7 @@ export const projectOnboarding = workflow
         {
           projectId: args.projectId,
           expectedDomain: args.expectedDomain,
+          expectedGeneration: args.expectedGeneration,
           refresh: args.refresh,
           error:
             error instanceof Error
@@ -56,10 +59,18 @@ export const projectOnboarding = workflow
   });
 
 export const getProjectContext = internalQuery({
-  args: { projectId: v.id("projects"), expectedDomain: v.string() },
+  args: {
+    projectId: v.id("projects"),
+    expectedDomain: v.string(),
+    expectedGeneration: v.number(),
+  },
   handler: async (ctx, args) => {
     const project = await ctx.db.get(args.projectId);
-    if (!project || project.domain !== args.expectedDomain)
+    if (
+      !project ||
+      project.domain !== args.expectedDomain ||
+      (project.knowledgeGeneration ?? 0) !== args.expectedGeneration
+    )
       throw new Error("Project context changed during knowledge workflow");
     const pages = await ctx.db
       .query("projectPages")
@@ -86,6 +97,7 @@ export const setProjectStage = internalMutation({
   args: {
     projectId: v.id("projects"),
     expectedDomain: v.string(),
+    expectedGeneration: v.number(),
     status: v.union(
       v.literal("crawling"),
       v.literal("synthesizing"),
@@ -94,7 +106,12 @@ export const setProjectStage = internalMutation({
   },
   handler: async (ctx, args) => {
     const project = await ctx.db.get(args.projectId);
-    if (!project || project.domain !== args.expectedDomain) return;
+    if (
+      !project ||
+      project.domain !== args.expectedDomain ||
+      (project.knowledgeGeneration ?? 0) !== args.expectedGeneration
+    )
+      return;
     await ctx.db.patch(args.projectId, {
       status: args.status,
       updatedAt: Date.now(),
@@ -106,12 +123,18 @@ export const failProject = internalMutation({
   args: {
     projectId: v.id("projects"),
     expectedDomain: v.string(),
+    expectedGeneration: v.number(),
     refresh: v.boolean(),
     error: v.string(),
   },
   handler: async (ctx, args) => {
     const project = await ctx.db.get(args.projectId);
-    if (!project || project.domain !== args.expectedDomain) return;
+    if (
+      !project ||
+      project.domain !== args.expectedDomain ||
+      (project.knowledgeGeneration ?? 0) !== args.expectedGeneration
+    )
+      return;
     await ctx.db.patch(args.projectId, {
       status:
         args.refresh && project.activeKnowledgeVersionId ? "ready" : "failed",
@@ -125,6 +148,7 @@ export const persistKnowledge = internalMutation({
   args: {
     projectId: v.id("projects"),
     expectedDomain: v.string(),
+    expectedGeneration: v.number(),
     pages: v.array(persistedPage),
     markdown: v.optional(v.string()),
     knowledgeStorageId: v.optional(v.id("_storage")),
@@ -136,7 +160,11 @@ export const persistKnowledge = internalMutation({
   },
   handler: async (ctx, args) => {
     const project = await ctx.db.get(args.projectId);
-    if (!project || project.domain !== args.expectedDomain)
+    if (
+      !project ||
+      project.domain !== args.expectedDomain ||
+      (project.knowledgeGeneration ?? 0) !== args.expectedGeneration
+    )
       throw new Error("Project context changed during knowledge workflow");
     const now = Date.now();
     for (const page of args.pages) {
@@ -221,18 +249,20 @@ export const crawlAndSynthesize = internalAction({
   args: {
     projectId: v.id("projects"),
     expectedDomain: v.string(),
+    expectedGeneration: v.number(),
     refresh: v.boolean(),
   },
   handler: async (ctx, args) => {
     const context = await ctx.runQuery(internal.onboarding.getProjectContext, {
       projectId: args.projectId,
       expectedDomain: args.expectedDomain,
+      expectedGeneration: args.expectedGeneration,
     });
     const { canonicalUrl, pages } = await crawlWebsite(context.project.domain);
     const prepared = await Promise.all(
       pages.map(async (page) => {
         const content = page.content.slice(0, 60_000);
-        const contentHash = await sha256(page.content);
+        const contentHash = await sha256(content);
         const existing = context.pages.find(
           (saved: any) =>
             saved.url === page.finalUrl && saved.contentHash === contentHash,
@@ -265,11 +295,13 @@ export const crawlAndSynthesize = internalAction({
         (page) => previousHashes.get(page.url) !== page.contentHash,
       ) || prepared.length !== context.pages.length;
 
-    await ctx.runMutation(internal.onboarding.setProjectStage, {
-      projectId: args.projectId,
-      expectedDomain: args.expectedDomain,
-      status: "synthesizing",
-    });
+    if (!args.refresh)
+      await ctx.runMutation(internal.onboarding.setProjectStage, {
+        projectId: args.projectId,
+        expectedDomain: args.expectedDomain,
+        expectedGeneration: args.expectedGeneration,
+        status: "synthesizing",
+      });
     const sourceDocument = prepared
       .map(
         (page) =>
@@ -323,6 +355,7 @@ export const crawlAndSynthesize = internalAction({
     await ctx.runMutation(internal.onboarding.persistKnowledge, {
       projectId: args.projectId,
       expectedDomain: args.expectedDomain,
+      expectedGeneration: args.expectedGeneration,
       pages: prepared,
       markdown,
       knowledgeStorageId,

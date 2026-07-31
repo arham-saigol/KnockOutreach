@@ -77,6 +77,7 @@ export const create = mutation({
       inboxId: args.inboxId.trim(),
       status: "crawling",
       knowledgeVersion: 0,
+      knowledgeGeneration: 1,
       exclusions: {
         keywords: [],
         domains: [],
@@ -91,6 +92,7 @@ export const create = mutation({
     const workflowId = await start(ctx, internal.onboarding.projectOnboarding, {
       projectId,
       expectedDomain: domain,
+      expectedGeneration: 1,
       refresh: false,
     });
     await ctx.db.patch(projectId, { onboardingWorkflowId: workflowId });
@@ -113,6 +115,7 @@ export const update = mutation({
     assertInboxOwnership(identity.subject, args.inboxId);
     const domain = normalizeUrl(args.domain);
     const domainChanged = domain !== project.domain;
+    const nextGeneration = (project.knowledgeGeneration ?? 0) + 1;
     if (domainChanged) {
       const existing = await ctx.db
         .query("projects")
@@ -134,7 +137,11 @@ export const update = mutation({
         cooldownDays: Math.max(1, Math.min(730, args.exclusions.cooldownDays)),
       },
       ...(domainChanged
-        ? { status: "crawling" as const, onboardingError: undefined }
+        ? {
+            status: "crawling" as const,
+            knowledgeGeneration: nextGeneration,
+            onboardingError: undefined,
+          }
         : {}),
       updatedAt: Date.now(),
     });
@@ -142,7 +149,12 @@ export const update = mutation({
       const workflowId = await start(
         ctx,
         internal.onboarding.projectOnboarding,
-        { projectId: args.projectId, expectedDomain: domain, refresh: false },
+        {
+          projectId: args.projectId,
+          expectedDomain: domain,
+          expectedGeneration: nextGeneration,
+          refresh: false,
+        },
       );
       await ctx.db.patch(args.projectId, { onboardingWorkflowId: workflowId });
     }
@@ -153,14 +165,17 @@ export const retryOnboarding = mutation({
   args: { projectId: v.id("projects") },
   handler: async (ctx, args) => {
     const { project } = await requireProject(ctx, args.projectId);
+    const nextGeneration = (project.knowledgeGeneration ?? 0) + 1;
     await ctx.db.patch(args.projectId, {
       status: "crawling",
+      knowledgeGeneration: nextGeneration,
       onboardingError: undefined,
       updatedAt: Date.now(),
     });
     const workflowId = await start(ctx, internal.onboarding.projectOnboarding, {
       projectId: args.projectId,
       expectedDomain: project.domain,
+      expectedGeneration: nextGeneration,
       refresh: false,
     });
     await ctx.db.patch(args.projectId, { onboardingWorkflowId: workflowId });
@@ -176,17 +191,20 @@ export const startDueRefreshes = internalMutation({
       .withIndex("by_next_refresh", (q) => q.lte("nextRefreshAt", now))
       .take(20);
     for (const project of due) {
+      const nextGeneration = (project.knowledgeGeneration ?? 0) + 1;
       const workflowId = await start(
         ctx,
         internal.onboarding.projectOnboarding,
         {
           projectId: project._id,
           expectedDomain: project.domain,
+          expectedGeneration: nextGeneration,
           refresh: true,
         },
       );
       await ctx.db.patch(project._id, {
         onboardingWorkflowId: workflowId,
+        knowledgeGeneration: nextGeneration,
         nextRefreshAt: now + 7 * 24 * 60 * 60 * 1000,
       });
     }
@@ -197,13 +215,16 @@ export const refreshKnowledge = mutation({
   args: { projectId: v.id("projects") },
   handler: async (ctx, args) => {
     const { project } = await requireProject(ctx, args.projectId);
+    const nextGeneration = (project.knowledgeGeneration ?? 0) + 1;
     const workflowId = await start(ctx, internal.onboarding.projectOnboarding, {
       projectId: args.projectId,
       expectedDomain: project.domain,
+      expectedGeneration: nextGeneration,
       refresh: true,
     });
     await ctx.db.patch(args.projectId, {
       onboardingWorkflowId: workflowId,
+      knowledgeGeneration: nextGeneration,
       nextRefreshAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
     });
     return workflowId;

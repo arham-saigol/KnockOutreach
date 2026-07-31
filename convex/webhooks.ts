@@ -1,7 +1,9 @@
 import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalAction, internalMutation } from "./_generated/server";
 import { isDuplicateWebhook } from "../lib/core/webhook-dedup";
 import { advanceDeliveryStatus } from "../lib/core/delivery-state";
+import { recoverAgentMailSendId } from "./adapters/agentmail";
 
 const deliveryStatus = v.union(
   v.literal("sent"),
@@ -58,26 +60,6 @@ export const processAgentMailEvent = internalMutation({
         .query("sends")
         .withIndex("by_send_id", (q) => q.eq("sendId", args.sendId))
         .unique();
-    if (args.status && !send) return { duplicate: false, deferred: true };
-
-    await ctx.db.insert("webhookEvents", {
-      eventId: args.eventId,
-      eventType: args.eventType,
-      payloadHash: args.payloadHash,
-      providerMessageId: args.messageId,
-      processedAt: Date.now(),
-    });
-
-    if (send && args.status) {
-      const now = Date.now();
-      const status = advanceDeliveryStatus(send.status, args.status);
-      await ctx.db.patch(send._id, {
-        status,
-        updatedAt: now,
-        deliveredAt:
-          status === "delivered" && !send.deliveredAt ? now : send.deliveredAt,
-      });
-    }
 
     if (args.recipient && args.suppressionReason) {
       const email = args.recipient.toLowerCase();
@@ -103,6 +85,78 @@ export const processAgentMailEvent = internalMutation({
           });
       }
     }
+
+    if (args.status && !send) return { duplicate: false, deferred: true };
+
+    await ctx.db.insert("webhookEvents", {
+      eventId: args.eventId,
+      eventType: args.eventType,
+      payloadHash: args.payloadHash,
+      providerMessageId: args.messageId,
+      processedAt: Date.now(),
+    });
+
+    if (send && args.status) {
+      const now = Date.now();
+      const status = advanceDeliveryStatus(send.status, args.status);
+      await ctx.db.patch(send._id, {
+        status,
+        updatedAt: now,
+        deliveredAt:
+          status === "delivered" && !send.deliveredAt ? now : send.deliveredAt,
+      });
+    }
+
     return { duplicate: false, deferred: false };
+  },
+});
+
+const recoveryDelays = [1_000, 5_000, 30_000, 120_000, 600_000, 1_800_000];
+
+export const recoverDeferredAgentMailEvent = internalAction({
+  args: {
+    eventId: v.string(),
+    eventType: v.string(),
+    payloadHash: v.string(),
+    status: v.optional(deliveryStatus),
+    messageId: v.string(),
+    threadId: v.optional(v.string()),
+    inboxId: v.string(),
+    recipient: v.optional(v.string()),
+    suppressionReason: v.optional(
+      v.union(
+        v.literal("complaint"),
+        v.literal("unsubscribe"),
+        v.literal("hard_bounce"),
+      ),
+    ),
+    suppressDomain: v.boolean(),
+    attempt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const sendId = await recoverAgentMailSendId({
+      inboxId: args.inboxId,
+      messageId: args.messageId,
+    });
+    const result = sendId
+      ? await ctx.runMutation(internal.webhooks.processAgentMailEvent, {
+          eventId: args.eventId,
+          eventType: args.eventType,
+          payloadHash: args.payloadHash,
+          status: args.status,
+          sendId,
+          messageId: args.messageId,
+          threadId: args.threadId,
+          recipient: args.recipient,
+          suppressionReason: args.suppressionReason,
+          suppressDomain: args.suppressDomain,
+        })
+      : { deferred: true };
+    if (result.deferred && args.attempt < recoveryDelays.length)
+      await ctx.scheduler.runAfter(
+        recoveryDelays[args.attempt],
+        internal.webhooks.recoverDeferredAgentMailEvent,
+        { ...args, attempt: args.attempt + 1 },
+      );
   },
 });

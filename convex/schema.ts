@@ -50,6 +50,7 @@ export default defineSchema({
     activeKnowledgeVersionId: v.optional(v.id("knowledgeVersions")),
     exclusions,
     onboardingWorkflowId: v.optional(v.string()),
+    knowledgeGeneration: v.optional(v.number()),
     onboardingError: v.optional(v.string()),
     nextRefreshAt: v.number(),
     createdAt: v.number(),

@@ -32,12 +32,17 @@ const stepNames = [
   "Drafting",
 ];
 
-async function getOrCreateRun(ctx: any, startedBy: "cron" | "manual") {
+async function getOrCreateRun(
+  ctx: any,
+  startedBy: "cron" | "manual",
+  requestedDay?: string,
+) {
   const bounds =
     startedBy === "cron" ? completedProductHuntDay() : productHuntDay();
+  const day = requestedDay ?? bounds.day;
   const existing = await ctx.db
     .query("dailyRuns")
-    .withIndex("by_day", (q: any) => q.eq("day", bounds.day))
+    .withIndex("by_day", (q: any) => q.eq("day", day))
     .unique();
   if (
     existing &&
@@ -62,7 +67,7 @@ async function getOrCreateRun(ctx: any, startedBy: "cron" | "manual") {
     return { runId: existing._id, shouldStart: true };
   }
   const runId = await ctx.db.insert("dailyRuns", {
-    day: bounds.day,
+    day,
     status: "queued",
     currentStep: "Queued",
     startedBy,
@@ -77,7 +82,17 @@ export const runNow = mutation({
   args: {},
   handler: async (ctx) => {
     await requireIdentity(ctx);
-    const { runId, shouldStart } = await getOrCreateRun(ctx, "manual");
+    const latest = await ctx.db
+      .query("dailyRuns")
+      .withIndex("by_started_at")
+      .order("desc")
+      .first();
+    const retryDay = latest?.status === "failed" ? latest.day : undefined;
+    const { runId, shouldStart } = await getOrCreateRun(
+      ctx,
+      "manual",
+      retryDay,
+    );
     if (shouldStart) {
       const workflowId = await start(ctx, internal.pipeline.dailyPipeline, {
         runId,

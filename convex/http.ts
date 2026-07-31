@@ -4,7 +4,6 @@ import { internal } from "./_generated/api";
 import { verifySvixSignature } from "../lib/core/svix";
 import { sha256 } from "../lib/core/hashing";
 import { normalizeEmail } from "../lib/core/normalization";
-import { recoverAgentMailSendId } from "./adapters/agentmail";
 
 const http = httpRouter();
 
@@ -117,20 +116,22 @@ http.route({
       suppressionReason,
       suppressDomain,
     };
-    let result = await ctx.runMutation(
+    const result = await ctx.runMutation(
       internal.webhooks.processAgentMailEvent,
       eventArgs,
     );
     if (result.deferred && inboxId && providerMessageId) {
-      const sendId = await recoverAgentMailSendId({
-        inboxId,
-        messageId: providerMessageId,
-      });
-      if (sendId)
-        result = await ctx.runMutation(
-          internal.webhooks.processAgentMailEvent,
-          { ...eventArgs, sendId },
-        );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.webhooks.recoverDeferredAgentMailEvent,
+        {
+          ...eventArgs,
+          messageId: providerMessageId,
+          inboxId,
+          attempt: 0,
+        },
+      );
+      return new Response(null, { status: 202 });
     }
     if (result.deferred)
       return new Response("Send receipt not yet correlated", {
