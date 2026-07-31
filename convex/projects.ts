@@ -88,6 +88,7 @@ export const create = mutation({
     });
     const workflowId = await start(ctx, internal.onboarding.projectOnboarding, {
       projectId,
+      expectedDomain: domain,
       refresh: false,
     });
     await ctx.db.patch(projectId, { onboardingWorkflowId: workflowId });
@@ -138,7 +139,7 @@ export const update = mutation({
       const workflowId = await start(
         ctx,
         internal.onboarding.projectOnboarding,
-        { projectId: args.projectId, refresh: false },
+        { projectId: args.projectId, expectedDomain: domain, refresh: false },
       );
       await ctx.db.patch(args.projectId, { onboardingWorkflowId: workflowId });
     }
@@ -148,7 +149,7 @@ export const update = mutation({
 export const retryOnboarding = mutation({
   args: { projectId: v.id("projects") },
   handler: async (ctx, args) => {
-    await requireProject(ctx, args.projectId);
+    const { project } = await requireProject(ctx, args.projectId);
     await ctx.db.patch(args.projectId, {
       status: "crawling",
       onboardingError: undefined,
@@ -156,6 +157,7 @@ export const retryOnboarding = mutation({
     });
     const workflowId = await start(ctx, internal.onboarding.projectOnboarding, {
       projectId: args.projectId,
+      expectedDomain: project.domain,
       refresh: false,
     });
     await ctx.db.patch(args.projectId, { onboardingWorkflowId: workflowId });
@@ -174,7 +176,11 @@ export const startDueRefreshes = internalMutation({
       const workflowId = await start(
         ctx,
         internal.onboarding.projectOnboarding,
-        { projectId: project._id, refresh: true },
+        {
+          projectId: project._id,
+          expectedDomain: project.domain,
+          refresh: true,
+        },
       );
       await ctx.db.patch(project._id, {
         onboardingWorkflowId: workflowId,
@@ -187,9 +193,10 @@ export const startDueRefreshes = internalMutation({
 export const refreshKnowledge = mutation({
   args: { projectId: v.id("projects") },
   handler: async (ctx, args) => {
-    await requireProject(ctx, args.projectId);
+    const { project } = await requireProject(ctx, args.projectId);
     const workflowId = await start(ctx, internal.onboarding.projectOnboarding, {
       projectId: args.projectId,
+      expectedDomain: project.domain,
       refresh: true,
     });
     await ctx.db.patch(args.projectId, {

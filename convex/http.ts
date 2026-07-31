@@ -104,17 +104,25 @@ http.route({
       suppressionReason === "complaint" ||
       (suppressionReason === "hard_bounce" && /domain/.test(bounceKind));
 
-    await ctx.runMutation(internal.webhooks.processAgentMailEvent, {
-      eventId,
-      eventType,
-      payloadHash: await sha256(rawBody),
-      status: eventStatus,
-      messageId: providerMessageId,
-      threadId,
-      recipient,
-      suppressionReason,
-      suppressDomain,
-    });
+    const result = await ctx.runMutation(
+      internal.webhooks.processAgentMailEvent,
+      {
+        eventId,
+        eventType,
+        payloadHash: await sha256(rawBody),
+        status: eventStatus,
+        messageId: providerMessageId,
+        threadId,
+        recipient,
+        suppressionReason,
+        suppressDomain,
+      },
+    );
+    if (result.deferred)
+      return new Response("Send receipt not yet correlated", {
+        status: 503,
+        headers: { "Retry-After": "1" },
+      });
     return new Response(null, { status: 204 });
   }),
 });

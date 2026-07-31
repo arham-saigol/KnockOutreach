@@ -13,12 +13,22 @@ import { PROMPT_VERSIONS } from "./prompts";
 import { sha256 } from "../lib/core/hashing";
 
 export const projectOnboarding = workflow
-  .define({ args: { projectId: v.id("projects"), refresh: v.boolean() } })
+  .define({
+    args: {
+      projectId: v.id("projects"),
+      expectedDomain: v.string(),
+      refresh: v.boolean(),
+    },
+  })
   .handler(async (step, args): Promise<void> => {
     if (!args.refresh)
       await step.runMutation(
         internal.onboarding.setProjectStage,
-        { projectId: args.projectId, status: "crawling" },
+        {
+          projectId: args.projectId,
+          expectedDomain: args.expectedDomain,
+          status: "crawling",
+        },
         { name: "Mark website crawl started" },
       );
     try {
@@ -33,6 +43,7 @@ export const projectOnboarding = workflow
         internal.onboarding.failProject,
         {
           projectId: args.projectId,
+          expectedDomain: args.expectedDomain,
           refresh: args.refresh,
           error:
             error instanceof Error
@@ -45,10 +56,11 @@ export const projectOnboarding = workflow
   });
 
 export const getProjectContext = internalQuery({
-  args: { projectId: v.id("projects") },
+  args: { projectId: v.id("projects"), expectedDomain: v.string() },
   handler: async (ctx, args) => {
     const project = await ctx.db.get(args.projectId);
-    if (!project) throw new Error("Project no longer exists");
+    if (!project || project.domain !== args.expectedDomain)
+      throw new Error("Project context changed during knowledge workflow");
     const pages = await ctx.db
       .query("projectPages")
       .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
@@ -73,6 +85,7 @@ const persistedPage = v.object({
 export const setProjectStage = internalMutation({
   args: {
     projectId: v.id("projects"),
+    expectedDomain: v.string(),
     status: v.union(
       v.literal("crawling"),
       v.literal("synthesizing"),
@@ -80,6 +93,8 @@ export const setProjectStage = internalMutation({
     ),
   },
   handler: async (ctx, args) => {
+    const project = await ctx.db.get(args.projectId);
+    if (!project || project.domain !== args.expectedDomain) return;
     await ctx.db.patch(args.projectId, {
       status: args.status,
       updatedAt: Date.now(),
@@ -90,12 +105,13 @@ export const setProjectStage = internalMutation({
 export const failProject = internalMutation({
   args: {
     projectId: v.id("projects"),
+    expectedDomain: v.string(),
     refresh: v.boolean(),
     error: v.string(),
   },
   handler: async (ctx, args) => {
     const project = await ctx.db.get(args.projectId);
-    if (!project) return;
+    if (!project || project.domain !== args.expectedDomain) return;
     await ctx.db.patch(args.projectId, {
       status:
         args.refresh && project.activeKnowledgeVersionId ? "ready" : "failed",
@@ -108,6 +124,7 @@ export const failProject = internalMutation({
 export const persistKnowledge = internalMutation({
   args: {
     projectId: v.id("projects"),
+    expectedDomain: v.string(),
     pages: v.array(persistedPage),
     markdown: v.optional(v.string()),
     knowledgeStorageId: v.optional(v.id("_storage")),
@@ -119,7 +136,8 @@ export const persistKnowledge = internalMutation({
   },
   handler: async (ctx, args) => {
     const project = await ctx.db.get(args.projectId);
-    if (!project) throw new Error("Project no longer exists");
+    if (!project || project.domain !== args.expectedDomain)
+      throw new Error("Project context changed during knowledge workflow");
     const now = Date.now();
     for (const page of args.pages) {
       const existing = await ctx.db
@@ -140,6 +158,13 @@ export const persistKnowledge = internalMutation({
       if (existing) await ctx.db.patch(existing._id, value);
       else await ctx.db.insert("projectPages", value);
     }
+    const currentUrls = new Set(args.pages.map((page) => page.url));
+    const stalePages = await ctx.db
+      .query("projectPages")
+      .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+      .collect();
+    for (const page of stalePages)
+      if (!currentUrls.has(page.url)) await ctx.db.delete(page._id);
     if (args.meaningful && args.markdown) {
       if (!args.knowledgeStorageId)
         throw new Error("Knowledge storage artifact is missing");
@@ -193,10 +218,15 @@ const changeSchema = z.discriminatedUnion("meaningful", [
 ]);
 
 export const crawlAndSynthesize = internalAction({
-  args: { projectId: v.id("projects"), refresh: v.boolean() },
+  args: {
+    projectId: v.id("projects"),
+    expectedDomain: v.string(),
+    refresh: v.boolean(),
+  },
   handler: async (ctx, args) => {
     const context = await ctx.runQuery(internal.onboarding.getProjectContext, {
       projectId: args.projectId,
+      expectedDomain: args.expectedDomain,
     });
     const { canonicalUrl, pages } = await crawlWebsite(context.project.domain);
     const prepared = await Promise.all(
@@ -237,6 +267,7 @@ export const crawlAndSynthesize = internalAction({
 
     await ctx.runMutation(internal.onboarding.setProjectStage, {
       projectId: args.projectId,
+      expectedDomain: args.expectedDomain,
       status: "synthesizing",
     });
     const sourceDocument = prepared
@@ -291,6 +322,7 @@ export const crawlAndSynthesize = internalAction({
         : undefined;
     await ctx.runMutation(internal.onboarding.persistKnowledge, {
       projectId: args.projectId,
+      expectedDomain: args.expectedDomain,
       pages: prepared,
       markdown,
       knowledgeStorageId,

@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { isDuplicateWebhook } from "../lib/core/webhook-dedup";
+import { advanceDeliveryStatus } from "../lib/core/delivery-state";
 
 const deliveryStatus = v.union(
   v.literal("sent"),
@@ -35,7 +36,24 @@ export const processAgentMailEvent = internalMutation({
       .withIndex("by_event_id", (q) => q.eq("eventId", args.eventId))
       .unique();
     if (isDuplicateWebhook(existing?.eventId, args.eventId))
-      return { duplicate: true };
+      return { duplicate: true, deferred: false };
+    let send = args.messageId
+      ? await ctx.db
+          .query("sends")
+          .withIndex("by_message_id", (q) =>
+            q.eq("agentMailMessageId", args.messageId),
+          )
+          .unique()
+      : null;
+    if (!send && args.threadId)
+      send = await ctx.db
+        .query("sends")
+        .withIndex("by_thread_id", (q) =>
+          q.eq("agentMailThreadId", args.threadId),
+        )
+        .unique();
+    if (args.status && !send) return { duplicate: false, deferred: true };
+
     await ctx.db.insert("webhookEvents", {
       eventId: args.eventId,
       eventType: args.eventType,
@@ -44,27 +62,14 @@ export const processAgentMailEvent = internalMutation({
       processedAt: Date.now(),
     });
 
-    const send = args.messageId
-      ? await ctx.db
-          .query("sends")
-          .withIndex("by_message_id", (q) =>
-            q.eq("agentMailMessageId", args.messageId),
-          )
-          .unique()
-      : args.threadId
-        ? await ctx.db
-            .query("sends")
-            .withIndex("by_thread_id", (q) =>
-              q.eq("agentMailThreadId", args.threadId),
-            )
-            .unique()
-        : null;
     if (send && args.status) {
       const now = Date.now();
+      const status = advanceDeliveryStatus(send.status, args.status);
       await ctx.db.patch(send._id, {
-        status: args.status,
+        status,
         updatedAt: now,
-        deliveredAt: args.status === "delivered" ? now : send.deliveredAt,
+        deliveredAt:
+          status === "delivered" && !send.deliveredAt ? now : send.deliveredAt,
       });
     }
 
@@ -92,6 +97,6 @@ export const processAgentMailEvent = internalMutation({
           });
       }
     }
-    return { duplicate: false };
+    return { duplicate: false, deferred: false };
   },
 });
