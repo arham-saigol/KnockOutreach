@@ -33,6 +33,7 @@ export const projectOnboarding = workflow
         internal.onboarding.failProject,
         {
           projectId: args.projectId,
+          refresh: args.refresh,
           error:
             error instanceof Error
               ? error.message
@@ -87,10 +88,17 @@ export const setProjectStage = internalMutation({
 });
 
 export const failProject = internalMutation({
-  args: { projectId: v.id("projects"), error: v.string() },
+  args: {
+    projectId: v.id("projects"),
+    refresh: v.boolean(),
+    error: v.string(),
+  },
   handler: async (ctx, args) => {
+    const project = await ctx.db.get(args.projectId);
+    if (!project) return;
     await ctx.db.patch(args.projectId, {
-      status: "failed",
+      status:
+        args.refresh && project.activeKnowledgeVersionId ? "ready" : "failed",
       onboardingError: args.error.slice(0, 1_000),
       updatedAt: Date.now(),
     });

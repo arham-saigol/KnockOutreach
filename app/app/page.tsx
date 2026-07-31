@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useClerk, useUser } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
 import {
   Authenticated,
   AuthLoading,
@@ -119,6 +120,7 @@ function DemoQueue() {
 }
 
 function LiveQueue() {
+  const router = useRouter();
   const { user } = useUser();
   const { signOut } = useClerk();
   const rawProjects = useQuery(api.projects.list, {}) as Project[] | undefined;
@@ -172,12 +174,12 @@ function LiveQueue() {
     ],
   );
 
-  if (!rawProjects || !rawCandidates || !activeProjectId)
+  useEffect(() => {
+    if (rawProjects && rawProjects.length === 0) router.replace("/onboarding");
+  }, [rawProjects, router]);
+
+  if (!rawProjects || !projects.length || !rawCandidates || !activeProjectId)
     return <QueueSkeleton />;
-  if (!projects.length) {
-    window.location.assign("/onboarding");
-    return <QueueSkeleton />;
-  }
   return (
     <QueueWorkspace
       projects={projects}

@@ -157,7 +157,7 @@ export function AppHeader({
               </DropdownMenu.RadioGroup>
               <DropdownMenu.Separator className="my-1 h-px bg-line" />
               <DropdownMenu.Item className={menuItem} asChild>
-                <Link href="/settings">
+                <Link href={`/settings?projectId=${activeProject.id}`}>
                   <Settings className="size-4 text-muted" /> Settings
                 </Link>
               </DropdownMenu.Item>

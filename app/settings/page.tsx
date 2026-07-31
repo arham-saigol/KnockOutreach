@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { SettingsForm } from "@/components/settings-form";
@@ -31,10 +32,14 @@ function DemoSettings() {
 }
 
 function LiveSettings() {
+  const searchParams = useSearchParams();
   const projects = useQuery(api.projects.list, {}) as Project[] | undefined;
   const update = useMutation(api.projects.update);
   const refresh = useMutation(api.projects.refreshKnowledge);
-  const project = projects?.[0];
+  const requestedProjectId = searchParams.get("projectId");
+  const project =
+    projects?.find((candidate) => candidate.id === requestedProjectId) ??
+    projects?.[0];
   if (!project) return <div className="min-h-dvh bg-canvas" />;
   return (
     <SettingsForm
