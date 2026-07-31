@@ -18,4 +18,12 @@ describe("candidate state machine", () => {
       "Invalid candidate transition",
     );
   });
+
+  it("only permits contact retries from no_contact", () => {
+    expect(canTransitionCandidate("no_contact", "ready")).toBe(true);
+    expect(canTransitionCandidate("send_failed", "ready")).toBe(false);
+    expect(canTransitionCandidate("send_unknown", "ready")).toBe(false);
+    expect(canTransitionCandidate("sent", "ready")).toBe(false);
+    expect(canTransitionCandidate("dismissed", "ready")).toBe(false);
+  });
 });

@@ -87,6 +87,7 @@ export const getRetryContext = internalQuery({
     const candidate = await ctx.db.get(args.candidateId);
     if (!candidate || candidate.ownerId !== args.ownerId)
       throw new Error("Candidate not found");
+    assertCandidateTransition(candidate.status, "ready");
     const launch = await ctx.db.get(candidate.launchId);
     const enrichment = candidate.enrichmentId
       ? await ctx.db.get(candidate.enrichmentId)
@@ -112,6 +113,10 @@ export const applyContactRetry = internalMutation({
     sourceHashes: v.array(v.object({ url: v.string(), hash: v.string() })),
   },
   handler: async (ctx, args) => {
+    const candidate = await ctx.db.get(args.candidateId);
+    if (!candidate || candidate.enrichmentId !== args.enrichmentId)
+      throw new Error("Candidate enrichment is unavailable");
+    assertCandidateTransition(candidate.status, "ready");
     const selected = args.emails[0];
     await ctx.db.patch(args.enrichmentId, {
       emails: args.emails,

@@ -37,7 +37,11 @@ async function getOrCreateRun(ctx: any, startedBy: "cron" | "manual") {
     .query("dailyRuns")
     .withIndex("by_day", (q: any) => q.eq("day", bounds.day))
     .unique();
-  if (existing && ["queued", "running", "completed"].includes(existing.status))
+  if (
+    existing &&
+    (["queued", "running"].includes(existing.status) ||
+      (existing.status === "completed" && startedBy === "cron"))
+  )
     return { runId: existing._id, shouldStart: false };
   const now = Date.now();
   if (existing) {
@@ -939,11 +943,16 @@ export const filterEnrichAndDraft = internalAction({
         counts,
       });
     }
+    const failureMessage = counts.failed
+      ? `${counts.failed} launch item${counts.failed === 1 ? "" : "s"} failed and will be retried`
+      : undefined;
     await ctx.runMutation(internal.pipeline.updateStep, {
       runId: args.runId,
       name: "Drafting",
-      status: "completed",
+      status: counts.failed ? "failed" : "completed",
+      error: failureMessage,
       counts,
     });
+    if (failureMessage) throw new Error(failureMessage);
   },
 });

@@ -60,10 +60,7 @@ export function LaunchCard({
   }
 
   const status = candidate.status;
-  const isProblem =
-    status === "send_failed" ||
-    status === "send_unknown" ||
-    status === "no_contact";
+  const isProblem = status === "no_contact";
 
   return (
     <article
