@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import { verifySvixSignature } from "../lib/core/svix";
 import { sha256 } from "../lib/core/hashing";
 import { normalizeEmail } from "../lib/core/normalization";
+import { recoverAgentMailSendId } from "./adapters/agentmail";
 
 const http = httpRouter();
 
@@ -61,6 +62,7 @@ http.route({
       eventObject.message_id,
       payload.message_id,
     );
+    const inboxId = firstString(eventObject.inbox_id, payload.inbox_id);
     const threadId = firstString(eventObject.thread_id, payload.thread_id);
     const rawRecipient = firstString(
       eventObject.recipient,
@@ -104,20 +106,32 @@ http.route({
       suppressionReason === "complaint" ||
       (suppressionReason === "hard_bounce" && /domain/.test(bounceKind));
 
-    const result = await ctx.runMutation(
+    const eventArgs = {
+      eventId,
+      eventType,
+      payloadHash: await sha256(rawBody),
+      status: eventStatus,
+      messageId: providerMessageId,
+      threadId,
+      recipient,
+      suppressionReason,
+      suppressDomain,
+    };
+    let result = await ctx.runMutation(
       internal.webhooks.processAgentMailEvent,
-      {
-        eventId,
-        eventType,
-        payloadHash: await sha256(rawBody),
-        status: eventStatus,
-        messageId: providerMessageId,
-        threadId,
-        recipient,
-        suppressionReason,
-        suppressDomain,
-      },
+      eventArgs,
     );
+    if (result.deferred && inboxId && providerMessageId) {
+      const sendId = await recoverAgentMailSendId({
+        inboxId,
+        messageId: providerMessageId,
+      });
+      if (sendId)
+        result = await ctx.runMutation(
+          internal.webhooks.processAgentMailEvent,
+          { ...eventArgs, sendId },
+        );
+    }
     if (result.deferred)
       return new Response("Send receipt not yet correlated", {
         status: 503,

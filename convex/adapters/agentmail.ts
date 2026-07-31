@@ -17,6 +17,41 @@ export function isAmbiguousAgentMailStatus(status: number) {
   return status >= 500 && status <= 599;
 }
 
+export async function recoverAgentMailSendId(input: {
+  inboxId: string;
+  messageId: string;
+}) {
+  const apiKey = process.env.AGENTMAIL_API_KEY;
+  if (!apiKey) return undefined;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(
+      `https://api.agentmail.to/v0/inboxes/${encodeURIComponent(input.inboxId)}/messages/${encodeURIComponent(input.messageId)}`,
+      {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) return undefined;
+    const value = await response.json();
+    if (!value || typeof value !== "object") return undefined;
+    const headers = (value as { headers?: unknown }).headers;
+    if (!headers || typeof headers !== "object" || Array.isArray(headers))
+      return undefined;
+    const entry = Object.entries(headers).find(
+      ([name, headerValue]) =>
+        name.toLowerCase() === "x-knock-send-id" &&
+        typeof headerValue === "string",
+    );
+    return entry?.[1] as string | undefined;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function sendAgentMail(input: {
   inboxId: string;
   to: string;

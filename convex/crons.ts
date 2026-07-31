@@ -3,8 +3,8 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
-// 15:15 Asia/Karachi (UTC+5) = 10:15 UTC. Product Hunt day bounds are
-// computed separately in America/Los_Angeles inside the workflow.
+// 15:15 Asia/Karachi (UTC+5) = 10:15 UTC. At this time the workflow fetches
+// the previous, fully completed America/Los_Angeles calendar day.
 crons.daily(
   "global Product Hunt discovery",
   { hourUTC: 10, minuteUTC: 15 },

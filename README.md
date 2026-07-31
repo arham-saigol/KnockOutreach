@@ -35,19 +35,20 @@ The indexed Convex schema includes `projects`, `projectPages`, `knowledgeVersion
 
 Set these in the target deployment with `npx convex env set NAME VALUE` or in the Convex dashboard. Do not put them in `.env.local`, Vercel browser variables, or committed files.
 
-| Variable                    | Required    | Purpose                                    |
-| --------------------------- | ----------- | ------------------------------------------ |
-| `CLERK_JWT_ISSUER_DOMAIN`   | yes         | Clerk Frontend API / JWT issuer domain     |
-| `PRODUCT_HUNT_ACCESS_TOKEN` | yes         | Product Hunt GraphQL bearer token          |
-| `TINYFISH_API_KEY`          | yes         | TinyFish Fetch API key                     |
-| `DEEPSEEK_API_KEY`          | yes         | DeepSeek API key                           |
-| `DEEPSEEK_MODEL`            | no          | Defaults to `deepseek-v4-flash`            |
-| `AGENTMAIL_API_KEY`         | yes         | Shared server-side AgentMail key           |
-| `AGENTMAIL_WEBHOOK_SECRET`  | yes         | Endpoint secret beginning with `whsec_`    |
-| `CONTACT_COOLDOWN_DAYS`     | no          | Default project cooldown; defaults to `90` |
-| `KNOCK_APP_URL`             | recommended | Canonical Vercel application URL           |
+| Variable                    | Required    | Purpose                                     |
+| --------------------------- | ----------- | ------------------------------------------- |
+| `CLERK_JWT_ISSUER_DOMAIN`   | yes         | Clerk Frontend API / JWT issuer domain      |
+| `PRODUCT_HUNT_ACCESS_TOKEN` | yes         | Product Hunt GraphQL bearer token           |
+| `TINYFISH_API_KEY`          | yes         | TinyFish Fetch API key                      |
+| `DEEPSEEK_API_KEY`          | yes         | DeepSeek API key                            |
+| `DEEPSEEK_MODEL`            | no          | Defaults to `deepseek-v4-flash`             |
+| `AGENTMAIL_API_KEY`         | yes         | Shared server-side AgentMail key            |
+| `AGENTMAIL_WEBHOOK_SECRET`  | yes         | Endpoint secret beginning with `whsec_`     |
+| `AGENTMAIL_INBOX_BINDINGS`  | yes         | JSON map of Clerk subjects to owned inboxes |
+| `CONTACT_COOLDOWN_DAYS`     | no          | Default project cooldown; defaults to `90`  |
+| `KNOCK_APP_URL`             | recommended | Canonical Vercel application URL            |
 
-The AgentMail API key is intentionally not part of project onboarding or stored in any Convex table.
+The AgentMail API key is intentionally not part of project onboarding or stored in any Convex table. `AGENTMAIL_INBOX_BINDINGS` must be a JSON object such as `{"user_123":["inbox_abc","sender@example.com"]}`; project creation, updates, and sends fail closed unless the authenticated Clerk subject owns the selected inbox.
 
 ## Exact service setup
 
@@ -72,7 +73,7 @@ The AgentMail API key is intentionally not part of project onboarding or stored 
 
 5. Copy the deployment’s `.convex.cloud` client URL to `NEXT_PUBLIC_CONVEX_URL`. The AgentMail webhook uses the corresponding `.convex.site` URL.
 
-The schedule in `convex/crons.ts` starts discovery at **10:15 UTC**, which is **3:15 PM Asia/Karachi**. The workflow separately computes Product Hunt’s day in `America/Los_Angeles`. A second daily schedule selects projects whose rolling seven-day knowledge refresh is due.
+The schedule in `convex/crons.ts` starts discovery at **10:15 UTC**, which is **3:15 PM Asia/Karachi**. At that time the workflow fetches the previous, fully completed Product Hunt calendar day in `America/Los_Angeles`. A second daily schedule selects projects whose rolling seven-day knowledge refresh is due.
 
 ### 3. Product Hunt
 
@@ -101,7 +102,7 @@ Every model boundary uses JSON mode plus a Zod schema. Drafts receive additional
 ### 6. AgentMail and webhooks
 
 1. Create the sending inboxes in AgentMail and copy each inbox ID/address into its Knock project.
-2. Set the organization API key as `AGENTMAIL_API_KEY` in Convex Cloud.
+2. Set the organization API key as `AGENTMAIL_API_KEY` in Convex Cloud, then set `AGENTMAIL_INBOX_BINDINGS` to the server-managed Clerk-subject-to-inbox JSON map.
 3. Create one AgentMail webhook pointing to:
 
    ```text

@@ -21,6 +21,10 @@ export function productHuntDay(now = new Date()) {
   };
 }
 
+export function completedProductHuntDay(now = new Date()) {
+  return productHuntDay(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+}
+
 function zonedMidnight(year: number, month: number, date: number) {
   const localMidnightAsUtc = Date.UTC(year, month - 1, date);
   let instant = localMidnightAsUtc;

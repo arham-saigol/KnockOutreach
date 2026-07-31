@@ -16,53 +16,65 @@ import { sha256 } from "../lib/core/hashing";
 export const list = query({
   args: { projectId: v.id("projects") },
   handler: async (ctx, args) => {
-    await requireProject(ctx, args.projectId);
+    const { project } = await requireProject(ctx, args.projectId);
+    if (project.status !== "ready" || !project.activeKnowledgeVersionId)
+      return [];
     const candidates = await ctx.db
       .query("projectCandidates")
       .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
       .order("desc")
       .collect();
     return Promise.all(
-      candidates.map(async (candidate) => {
-        const launch = await ctx.db.get(candidate.launchId);
-        const enrichment = candidate.enrichmentId
-          ? await ctx.db.get(candidate.enrichmentId)
-          : null;
-        const drafts = await ctx.db
-          .query("drafts")
-          .withIndex("by_candidate", (q) => q.eq("candidateId", candidate._id))
-          .order("desc")
-          .collect();
-        const draft =
-          drafts.find(
-            (item) => item.status === "ready" || item.status === "approved",
-          ) ?? drafts[0];
-        if (!launch || !draft) return null;
-        return {
-          id: candidate._id,
-          projectId: candidate.projectId,
-          name: launch.name,
-          tagline: launch.tagline,
-          thumbnailUrl: launch.thumbnailUrl,
-          productHuntUrl: launch.productHuntUrl,
-          websiteUrl:
-            enrichment?.canonicalWebsite ??
-            launch.websiteUrl ??
-            launch.productHuntUrl,
-          companyContext:
-            enrichment?.companyContext ?? launch.description ?? launch.tagline,
-          recipientEmail: candidate.selectedEmail,
-          emailConfidence: candidate.selectedEmailConfidence,
-          emailEvidenceUrl: candidate.selectedEmailEvidenceUrl,
-          alternativeEmails: candidate.alternativeEmails,
-          matchReason: candidate.matchReason,
-          subject: draft.subject,
-          body: draft.body,
-          status: candidate.status,
-          completedAt: candidate.completedAt,
-          error: candidate.error,
-        };
-      }),
+      candidates
+        .filter(
+          (candidate) =>
+            candidate.knowledgeVersionId === project.activeKnowledgeVersionId ||
+            ["sent", "dismissed", "send_unknown"].includes(candidate.status),
+        )
+        .map(async (candidate) => {
+          const launch = await ctx.db.get(candidate.launchId);
+          const enrichment = candidate.enrichmentId
+            ? await ctx.db.get(candidate.enrichmentId)
+            : null;
+          const drafts = await ctx.db
+            .query("drafts")
+            .withIndex("by_candidate", (q) =>
+              q.eq("candidateId", candidate._id),
+            )
+            .order("desc")
+            .collect();
+          const draft =
+            drafts.find(
+              (item) => item.status === "ready" || item.status === "approved",
+            ) ?? drafts[0];
+          if (!launch || !draft) return null;
+          return {
+            id: candidate._id,
+            projectId: candidate.projectId,
+            name: launch.name,
+            tagline: launch.tagline,
+            thumbnailUrl: launch.thumbnailUrl,
+            productHuntUrl: launch.productHuntUrl,
+            websiteUrl:
+              enrichment?.canonicalWebsite ??
+              launch.websiteUrl ??
+              launch.productHuntUrl,
+            companyContext:
+              enrichment?.companyContext ??
+              launch.description ??
+              launch.tagline,
+            recipientEmail: candidate.selectedEmail,
+            emailConfidence: candidate.selectedEmailConfidence,
+            emailEvidenceUrl: candidate.selectedEmailEvidenceUrl,
+            alternativeEmails: candidate.alternativeEmails,
+            matchReason: candidate.matchReason,
+            subject: draft.subject,
+            body: draft.body,
+            status: candidate.status,
+            completedAt: candidate.completedAt,
+            error: candidate.error,
+          };
+        }),
     ).then((items) => items.filter(Boolean));
   },
 });

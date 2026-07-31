@@ -18,6 +18,7 @@ export const processAgentMailEvent = internalMutation({
     eventType: v.string(),
     payloadHash: v.string(),
     status: v.optional(deliveryStatus),
+    sendId: v.optional(v.string()),
     messageId: v.optional(v.string()),
     threadId: v.optional(v.string()),
     recipient: v.optional(v.string()),
@@ -51,6 +52,11 @@ export const processAgentMailEvent = internalMutation({
         .withIndex("by_thread_id", (q) =>
           q.eq("agentMailThreadId", args.threadId),
         )
+        .unique();
+    if (!send && args.sendId)
+      send = await ctx.db
+        .query("sends")
+        .withIndex("by_send_id", (q) => q.eq("sendId", args.sendId))
         .unique();
     if (args.status && !send) return { duplicate: false, deferred: true };
 

@@ -15,7 +15,7 @@ import { fetchProductHuntLaunches } from "./adapters/productHunt";
 import { crawlWebsite } from "./adapters/tinyfish";
 import { structuredCompletion } from "./adapters/deepseek";
 import { PROMPT_VERSIONS, draftSystemPrompt } from "./prompts";
-import { productHuntDay } from "../lib/core/time";
+import { completedProductHuntDay, productHuntDay } from "../lib/core/time";
 import {
   coarseProjectFilter,
   deterministicMassiveCompanyFilter,
@@ -33,7 +33,8 @@ const stepNames = [
 ];
 
 async function getOrCreateRun(ctx: any, startedBy: "cron" | "manual") {
-  const bounds = productHuntDay();
+  const bounds =
+    startedBy === "cron" ? completedProductHuntDay() : productHuntDay();
   const existing = await ctx.db
     .query("dailyRuns")
     .withIndex("by_day", (q: any) => q.eq("day", bounds.day))
@@ -41,7 +42,9 @@ async function getOrCreateRun(ctx: any, startedBy: "cron" | "manual") {
   if (
     existing &&
     (["queued", "running"].includes(existing.status) ||
-      (existing.status === "completed" && startedBy === "cron"))
+      (existing.status === "completed" &&
+        startedBy === "cron" &&
+        existing.startedBy === "cron"))
   )
     return { runId: existing._id, shouldStart: false };
   const now = Date.now();
@@ -628,6 +631,10 @@ export const upsertCandidateAndDraft = internalMutation({
       await ctx.db.patch(candidateId, {
         matchReason: args.reason,
         matchConfidence: args.confidence,
+        filterModel: args.filterModel,
+        filterPromptVersion: PROMPT_VERSIONS.projectFilter,
+        knowledgeVersionId: args.knowledgeVersionId,
+        sourceHashes: args.sourceHashes,
         selectedEmail: enrichment.selectedEmail,
         selectedEmailConfidence: enrichment.selectedEmailConfidence,
         selectedEmailEvidenceUrl: enrichment.selectedEmailEvidenceUrl,
@@ -635,6 +642,8 @@ export const upsertCandidateAndDraft = internalMutation({
           .slice(1)
           .map((email: any) => email.email),
         status: enrichment.selectedEmail ? "ready" : "no_contact",
+        completedAt: undefined,
+        error: undefined,
         updatedAt: now,
       });
     } else {
@@ -919,7 +928,14 @@ export const filterEnrichAndDraft = internalAction({
             launchId: match.launch._id,
           },
         );
-        if (existingCandidate) {
+        if (
+          existingCandidate &&
+          (existingCandidate.knowledgeVersionId ===
+            match.project.knowledge._id ||
+            ["sent", "dismissed", "sending", "send_unknown"].includes(
+              existingCandidate.status,
+            ))
+        ) {
           counts.drafted += 1;
           continue;
         }

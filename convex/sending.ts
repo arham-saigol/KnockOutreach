@@ -6,6 +6,8 @@ import { normalizeEmail } from "../lib/core/normalization";
 import { sha256 } from "../lib/core/hashing";
 import { assertCandidateTransition } from "../lib/core/state-machine";
 import { hasConflictingSend } from "../lib/core/send-policy";
+import { assertInboxOwnership } from "../lib/core/inbox-ownership";
+import { advanceDeliveryStatus } from "../lib/core/delivery-state";
 
 const bannedPhrases = [
   "i hope this finds you well",
@@ -49,6 +51,12 @@ export const prepareSend = internalMutation({
     validateApprovedDraft(args.subject, args.body);
     const project = await ctx.db.get(candidate.projectId);
     if (!project) throw new Error("Project not found");
+    if (
+      project.status !== "ready" ||
+      candidate.knowledgeVersionId !== project.activeKnowledgeVersionId
+    )
+      throw new Error("This candidate uses an inactive knowledge version.");
+    assertInboxOwnership(candidate.ownerId, project.inboxId);
     const recipient = candidate.selectedEmail
       ? normalizeEmail(candidate.selectedEmail)
       : null;
@@ -155,21 +163,24 @@ export const completeSend = internalMutation({
   },
   handler: async (ctx, args) => {
     const send = await ctx.db.get(args.sendRecordId);
-    if (!send || send.status !== "sending") return;
+    if (!send) return;
     const now = Date.now();
+    const status = advanceDeliveryStatus(send.status, "sent");
     await ctx.db.patch(send._id, {
-      status: "sent",
+      status,
       agentMailMessageId: args.messageId,
       agentMailThreadId: args.threadId,
-      sentAt: now,
+      sentAt: send.sentAt ?? now,
       updatedAt: now,
     });
-    await ctx.db.patch(send.candidateId, {
-      status: "sent",
-      completedAt: now,
-      updatedAt: now,
-      error: undefined,
-    });
+    const candidate = await ctx.db.get(send.candidateId);
+    if (candidate?.status === "sending")
+      await ctx.db.patch(send.candidateId, {
+        status: "sent",
+        completedAt: now,
+        updatedAt: now,
+        error: undefined,
+      });
   },
 });
 
@@ -194,6 +205,7 @@ export const failSend = internalMutation({
     await ctx.db.patch(send.candidateId, {
       status,
       error: args.error.slice(0, 1_000),
+      completedAt: args.ambiguous ? now : undefined,
       updatedAt: now,
     });
     if (!args.ambiguous)

@@ -61,16 +61,14 @@ export function QueueWorkspace({
     (candidate) => candidate.projectId === activeProject.id,
   );
   const pending = projectCandidates.filter((candidate) =>
-    ["ready", "send_failed", "no_contact", "send_unknown"].includes(
-      candidate.status,
-    ),
+    ["ready", "send_failed", "no_contact"].includes(candidate.status),
   );
   const playable = pending.filter(
     (candidate) =>
       candidate.recipientEmail && candidate.status !== "send_unknown",
   );
   const completed = projectCandidates.filter((candidate) =>
-    ["sent", "dismissed"].includes(candidate.status),
+    ["sent", "dismissed", "send_unknown"].includes(candidate.status),
   );
   const isRunning =
     runningLocal || run?.status === "running" || run?.status === "queued";
@@ -224,7 +222,7 @@ export function QueueWorkspace({
               </div>
             ) : (
               <div className="rounded-2xl border border-dashed border-line py-16 text-center text-sm text-muted">
-                Sent and dismissed launches will stay here.
+                Sent, dismissed, and delivery-unknown launches will stay here.
               </div>
             )}
           </Tabs.Content>

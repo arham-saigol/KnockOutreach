@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { productHuntDay } from "./time";
+import { completedProductHuntDay, productHuntDay } from "./time";
 
 describe("productHuntDay", () => {
   it("uses independent offsets across the spring DST transition", () => {
@@ -16,5 +16,11 @@ describe("productHuntDay", () => {
       postedAfter: "2026-11-01T07:00:00.000Z",
       postedBefore: "2026-11-02T08:00:00.000Z",
     });
+  });
+
+  it("selects the completed Los Angeles day for scheduled discovery", () => {
+    expect(completedProductHuntDay(new Date("2026-07-31T10:15:00Z")).day).toBe(
+      "2026-07-30",
+    );
   });
 });

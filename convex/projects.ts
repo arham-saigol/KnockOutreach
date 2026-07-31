@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { requireIdentity, requireProject } from "./lib/auth";
 import { normalizeUrl } from "../lib/core/normalization";
+import { assertInboxOwnership } from "../lib/core/inbox-ownership";
 
 const exclusionsValidator = v.object({
   keywords: v.array(v.string()),
@@ -57,6 +58,7 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx);
+    assertInboxOwnership(identity.subject, args.inboxId);
     const domain = normalizeUrl(args.domain);
     const existing = await ctx.db
       .query("projects")
@@ -108,6 +110,7 @@ export const update = mutation({
   },
   handler: async (ctx, args) => {
     const { identity, project } = await requireProject(ctx, args.projectId);
+    assertInboxOwnership(identity.subject, args.inboxId);
     const domain = normalizeUrl(args.domain);
     const domainChanged = domain !== project.domain;
     if (domainChanged) {

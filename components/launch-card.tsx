@@ -314,6 +314,7 @@ function QuickLink({
 
 function CompletedStatus({ candidate }: { candidate: Candidate }) {
   const sent = candidate.status === "sent";
+  const unknown = candidate.status === "send_unknown";
   return (
     <div className="flex items-center gap-2 text-xs font-semibold">
       <span
@@ -321,15 +322,19 @@ function CompletedStatus({ candidate }: { candidate: Candidate }) {
           "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1",
           sent
             ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300"
-            : "bg-ink/[0.06] text-muted",
+            : unknown
+              ? "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+              : "bg-ink/[0.06] text-muted",
         )}
       >
         {sent ? (
           <CheckCircle2 className="size-3.5" />
+        ) : unknown ? (
+          <CircleAlert className="size-3.5" />
         ) : (
           <X className="size-3.5" />
         )}
-        {sent ? "Sent" : "Dismissed"}
+        {sent ? "Sent" : unknown ? "Delivery unknown" : "Dismissed"}
       </span>
       {candidate.completedAt ? (
         <span className="font-medium text-muted">
